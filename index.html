@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Break the Ice</title>
+    <style>
+        /* ── Reset & Fullscreen ── */
+        *,
+        *::before,
+        *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0a0e17;
+            font-family: system-ui, -apple-system, sans-serif;
+            touch-action: none;
+            /* prevent scroll/pinch on mobile */;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            cursor: none;
+            touch-action: none;
+        }
+
+        /* ── Final Image Overlay ── */
+        #final-overlay {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 2.2s cubic-bezier(0.23, 1, 0.32, 1);
+            z-index: 10;
+            background: transparent;
+            will-change: opacity;
+        }
+        #final-overlay.visible {
+            opacity: 1;
+        }
+
+        #final-video{
+        position:fixed;
+        inset:0;
+        width:100vw;
+        height:100vh;
+        object-fit:cover;
+        background:black;
+        }
+
+        @keyframes floatGlow {
+            0%,
+            100% {
+                transform: translateY(0px) scale(1);
+                filter: brightness(1) drop-shadow(0 0 30px rgba(120, 200, 255, 0.15));
+            }
+            50% {
+                transform: translateY(-12px) scale(1.01);
+                filter: brightness(1.04) drop-shadow(0 0 50px rgba(120, 200, 255, 0.25));
+            }
+        }
+
+        /* ── Responsive tweaks ── */
+        @media (max-width: 640px) {
+            #final-video {
+                max-width: 88vw;
+                max-height: 60vh;
+                border-radius: 8px;
+            }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            #final-video {
+                animation: none;
+                transition: none;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Final Video Overlay (hidden until ice breaks) -->
+    <div id="final-overlay">
+    <video
+    id="final-video"
+    playsinline
+    webkit-playsinline
+    preload="auto"
+    muted
+    ></video>
+</div>
+
+    <!-- ─── Three.js Import Map ─── -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <!-- ─── Main Application ─── -->
+    <script type="module">
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  IMPORTS
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        import * as THREE from 'three';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  CONFIG
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        const ICE_SIZE = 2.0;
+        const CRACK_LEVELS = 10;
+        const ICE_SURFACE_Z = 1.0; // front face of ice cube
+
+        // ── Final video (user replaces this URL) ──
+        const FINAL_VIDEO = "callingmeme1.mp4"; // Replace with your video URL
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  STATE
+        // ━━━━━━━━━━━━━━━━━═════════════════════════════════════════════════
+        let hitCount = 0;
+        let isShattered = false;
+        let isEnding = false;
+        let hammerSwing = 0;
+        let isSwining = false;
+        let swingSpeed = 0.035;
+        let cameraShake = { x: 0, y: 0, z: 0, intensity: 0 };
+        let freezeFrames = 0;
+        let fragments = [];
+        let fragmentParticles = [];
+        let allCrackPaths = [];
+        let crackMesh = null;
+        let visibleCrackCount = 0;
+        let iceMesh = null;
+        let iceMaterial = null;
+        let innerIceMesh = null;
+        let hammerGroup = null;
+        let hammerHead = null;
+        let hammerHandle = null;
+        let mouseX = 0,
+            mouseY = 0;
+        let targetHammerX = 0,
+            targetHammerY = 0;
+        let currentHammerX = 0,
+            currentHammerY = 0;
+        let currentHammerRotX = 0,
+            currentHammerRotY = 0;
+        let clock = new THREE.Clock();
+        let shatterClock = 0;
+        let isShattering = false;
+        let shakeDecay = 0.92;
+        let finalImageRevealed = false;
+        let finalOverlay = document.getElementById('final-overlay');
+        let finalVideo = document.getElementById('final-video');
+        finalVideo.src = FINAL_VIDEO;
+        finalVideo.load();
+        let isMobile = false;
+        let touchActive = false;
+        let touchId = null;
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  THREE.JS SETUP
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x080c18);
+        scene.fog = new THREE.FogExp2(0x080c18, 0.025);
+
+        const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.1, 50);
+        camera.position.set(0, 0.4, 5.0);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            powerPreference: "high-performance"
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        document.body.prepend(renderer.domElement);
+
+        // ── Post-processing ──
+        const composer = new EffectComposer(renderer);
+        const renderPass = new RenderPass(scene, camera);
+        composer.addPass(renderPass);
+
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            0.35, 0.4, 0.2
+        );
+        composer.addPass(bloomPass);
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  LIGHTS
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        const ambientLight = new THREE.AmbientLight(0x223355, 0.5);
+        scene.add(ambientLight);
+
+        const keyLight = new THREE.DirectionalLight(0x88ccff, 1.8);
+        keyLight.position.set(3, 5, 4);
+        keyLight.castShadow = true;
+        keyLight.shadow.mapSize.width = 1024;
+        keyLight.shadow.mapSize.height = 1024;
+        keyLight.shadow.camera.near = 0.5;
+        keyLight.shadow.camera.far = 15;
+        keyLight.shadow.camera.left = -5;
+        keyLight.shadow.camera.right = 5;
+        keyLight.shadow.camera.top = 5;
+        keyLight.shadow.camera.bottom = -5;
+        scene.add(keyLight);
+
+        const fillLight = new THREE.DirectionalLight(0x4466aa, 0.6);
+        fillLight.position.set(-3, 1, -2);
+        scene.add(fillLight);
+
+        const rimLight = new THREE.DirectionalLight(0x88ddff, 0.8);
+        rimLight.position.set(-1, 0.5, -4);
+        scene.add(rimLight);
+
+        const bottomLight = new THREE.PointLight(0x3355aa, 0.4, 8);
+        bottomLight.position.set(0, -3, 0);
+        scene.add(bottomLight);
+
+        const hemiLight = new THREE.HemisphereLight(0x4488cc, 0x001122, 0.6);
+        scene.add(hemiLight);
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  ICE CUBE
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        function createIce() {
+            const geo = new THREE.BoxGeometry(ICE_SIZE, ICE_SIZE, ICE_SIZE, 24, 24, 24);
+            const pos = geo.attributes.position;
+            for (let i = 0; i < pos.count; i++) {
+                let x = pos.getX(i);
+                let y = pos.getY(i);
+                let z = pos.getZ(i);
+                const noise = (Math.random() - 0.5) * 0.045;
+                const len = Math.sqrt(x * x + y * y + z * z);
+                const scale = 1 + noise * (1 - len / (ICE_SIZE * 0.8));
+                pos.setXYZ(i, x * scale, y * scale, z * scale);
+            }
+            geo.computeVertexNormals();
+
+            const mat = new THREE.MeshPhysicalMaterial({
+                color: 0xaaccff,
+                metalness: 0.0,
+                roughness: 0.08,
+                clearcoat: 0.4,
+                clearcoatRoughness: 0.2,
+                transparent: true,
+                opacity: 0.88,
+                ior: 1.31,
+                envMapIntensity: 0.8,
+                side: THREE.DoubleSide,
+                transmission: 0.45,
+                thickness: 1.2,
+                attenuationColor: new THREE.Color(0x88bbff),
+                attenuationDistance: 2.5,
+                premultipliedAlpha: true,
+                depthWrite: true,
+            });
+
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            mesh.position.y = 0.0;
+            scene.add(mesh);
+
+            // Inner glow volume
+            const innerGeo = new THREE.BoxGeometry(ICE_SIZE * 0.55, ICE_SIZE * 0.55, ICE_SIZE * 0.55, 12, 12, 12);
+            const innerMat = new THREE.MeshPhysicalMaterial({
+                color: 0x4488cc,
+                emissive: 0x224466,
+                emissiveIntensity: 0.15,
+                transparent: true,
+                opacity: 0.18,
+                roughness: 0.3,
+                metalness: 0.0,
+                side: THREE.BackSide,
+            });
+            const innerMesh = new THREE.Mesh(innerGeo, innerMat);
+            innerMesh.position.y = 0.0;
+            scene.add(innerMesh);
+
+            return { mesh, material: mat, innerMesh };
+        }
+
+        const iceResult = createIce();
+        iceMesh = iceResult.mesh;
+        iceMaterial = iceResult.material;
+        innerIceMesh = iceResult.innerMesh;
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  CRACK SYSTEM
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        function getSurfacePoint(face, u, v, size) {
+            const half = size / 2;
+            const p = new THREE.Vector3();
+            switch (face) {
+                case 0:
+                    p.set(half, (u - 0.5) * size, (v - 0.5) * size);
+                    break;
+                case 1:
+                    p.set(-half, (u - 0.5) * size, (v - 0.5) * size);
+                    break;
+                case 2:
+                    p.set((u - 0.5) * size, half, (v - 0.5) * size);
+                    break;
+                case 3:
+                    p.set((u - 0.5) * size, -half, (v - 0.5) * size);
+                    break;
+                case 4:
+                    p.set((u - 0.5) * size, (v - 0.5) * size, half);
+                    break;
+                case 5:
+                    p.set((u - 0.5) * size, (v - 0.5) * size, -half);
+                    break;
+            }
+            return p;
+        }
+
+        function generateCrackPath(size, maxSegments) {
+            const face = Math.floor(Math.random() * 6);
+            let u = 0.1 + Math.random() * 0.8;
+            let v = 0.1 + Math.random() * 0.8;
+            const points = [];
+            const segs = Math.min(maxSegments || 20, 12 + Math.floor(Math.random() * 14));
+
+            for (let i = 0; i < segs; i++) {
+                const p = getSurfacePoint(face, u, v, size);
+                p.x += (Math.random() - 0.5) * 0.012;
+                p.y += (Math.random() - 0.5) * 0.012;
+                p.z += (Math.random() - 0.5) * 0.012;
+                points.push(p.clone());
+
+                const angle = Math.random() * Math.PI * 2;
+                const step = 0.08 + Math.random() * 0.12;
+                u += Math.cos(angle) * step * (0.4 + Math.random() * 0.6);
+                v += Math.sin(angle) * step * (0.4 + Math.random() * 0.6);
+                u = Math.max(0.05, Math.min(0.95, u));
+                v = Math.max(0.05, Math.min(0.95, v));
+            }
+            return points;
+        }
+
+        // Pre-generate crack paths
+        for (let i = 0; i < 300; i++) {
+            const path = generateCrackPath(ICE_SIZE, 16 + Math.floor(Math.random() * 20));
+            if (path.length > 3) {
+                allCrackPaths.push(path);
+            }
+        }
+
+        function buildMergedCrackMesh(paths, color = 0x88ccff) {
+            const positions = [];
+            for (const path of paths) {
+                if (path.length < 2) continue;
+                for (let i = 0; i < path.length - 1; i++) {
+                    const a = path[i];
+                    const b = path[i + 1];
+                    positions.push(a.x, a.y, a.z);
+                    positions.push(b.x, b.y, b.z);
+                }
+            }
+            if (positions.length === 0) return null;
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            const mat = new THREE.LineBasicMaterial({
+                color: color,
+                transparent: true,
+                opacity: 0.8,
+                linewidth: 1,
+                depthWrite: false,
+            });
+            return new THREE.LineSegments(geo, mat);
+        }
+
+        function updateCracks(count) {
+            const pathsToShow = allCrackPaths.slice(0, Math.min(count, allCrackPaths.length));
+            if (crackMesh) {
+                scene.remove(crackMesh);
+                crackMesh.geometry.dispose();
+                crackMesh.material.dispose();
+                crackMesh = null;
+            }
+            if (pathsToShow.length === 0) return;
+            const merged = buildMergedCrackMesh(pathsToShow, 0x88ddff);
+            if (merged) {
+                crackMesh = merged;
+                crackMesh.position.y = 0;
+                scene.add(crackMesh);
+            }
+            visibleCrackCount = pathsToShow.length;
+        }
+
+        updateCracks(0);
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  HAMMER — built for ice-surface interaction
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        function createHammer() {
+            const group = new THREE.Group();
+
+            // ── Handle ──
+            const handleGeo = new THREE.CylinderGeometry(0.045, 0.055, 0.6, 8);
+            const handleMat = new THREE.MeshStandardMaterial({
+                color: 0x4a3a2a,
+                roughness: 0.7,
+                metalness: 0.1,
+            });
+            const handle = new THREE.Mesh(handleGeo, handleMat);
+            handle.rotation.x = Math.PI / 2;
+            handle.position.set(0, 0, -0.30);
+            handle.castShadow = true;
+            group.add(handle);
+
+            // ── Grip ──
+            const gripGeo = new THREE.CylinderGeometry(0.055, 0.07, 0.18, 8);
+            const gripMat = new THREE.MeshStandardMaterial({
+                color: 0x3a2a1a,
+                roughness: 0.9,
+                metalness: 0.0,
+            });
+            const grip = new THREE.Mesh(gripGeo, gripMat);
+            grip.rotation.x = Math.PI / 2;
+            grip.position.set(0, 0, -0.52);
+            grip.castShadow = true;
+            group.add(grip);
+
+            // ── Head ──
+            const headGroup = new THREE.Group();
+
+            // Main block
+            const headGeo = new THREE.BoxGeometry(0.22, 0.18, 0.28);
+            const headMat = new THREE.MeshStandardMaterial({
+                color: 0x555566,
+                roughness: 0.4,
+                metalness: 0.7,
+                envMapIntensity: 0.5,
+            });
+            const head = new THREE.Mesh(headGeo, headMat);
+            head.position.set(0, 0, 0.20);
+            head.castShadow = true;
+            headGroup.add(head);
+
+            // Striking face
+            const faceGeo = new THREE.BoxGeometry(0.18, 0.14, 0.02);
+            const faceMat = new THREE.MeshStandardMaterial({
+                color: 0x888899,
+                roughness: 0.3,
+                metalness: 0.8,
+            });
+            const face = new THREE.Mesh(faceGeo, faceMat);
+            face.position.set(0, 0, 0.34);
+            headGroup.add(face);
+
+            // Top detail
+            const topGeo = new THREE.BoxGeometry(0.16, 0.04, 0.20);
+            const topMat = new THREE.MeshStandardMaterial({
+                color: 0x444455,
+                roughness: 0.5,
+                metalness: 0.6,
+            });
+            const top = new THREE.Mesh(topGeo, topMat);
+            top.position.set(0, 0.12, 0.20);
+            headGroup.add(top);
+
+            group.add(headGroup);
+
+            // ── Store refs ──
+            hammerHead = headGroup;
+            hammerHandle = handle;
+
+            // ── Initial pose: on ice surface, facing ice ──
+            group.position.set(0, 0, ICE_SURFACE_Z);
+            // Face the ice (look at origin)
+            const lookTarget = new THREE.Vector3(0, 0, 0);
+            const dir = lookTarget.clone().sub(group.position).normalize();
+            const quat = new THREE.Quaternion().setFromUnitVectors(
+                new THREE.Vector3(0, 0, 1),
+                dir
+            );
+            group.quaternion.copy(quat);
+
+            group.scale.set(0.55, 0.55, 0.55);
+
+            return group;
+        }
+
+        hammerGroup = createHammer();
+        scene.add(hammerGroup);
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  SNOW / DUST PARTICLES
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        const particleCount = 320;
+        const particleGeo = new THREE.BufferGeometry();
+        const particlePos = new Float32Array(particleCount * 3);
+        const particleSizes = new Float32Array(particleCount);
+        const particleSpeeds = new Float32Array(particleCount);
+        const particleDrifts = new Float32Array(particleCount * 3);
+
+        for (let i = 0; i < particleCount; i++) {
+            const radius = 2.5 + Math.random() * 3.5;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            particlePos[i * 3] = Math.sin(phi) * Math.cos(theta) * radius;
+            particlePos[i * 3 + 1] = Math.cos(phi) * radius * 0.6;
+            particlePos[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * radius;
+            particleSizes[i] = 0.008 + Math.random() * 0.025;
+            particleSpeeds[i] = 0.06 + Math.random() * 0.12;
+            particleDrifts[i * 3] = (Math.random() - 0.5) * 0.005;
+            particleDrifts[i * 3 + 1] = (Math.random() - 0.5) * 0.003;
+            particleDrifts[i * 3 + 2] = (Math.random() - 0.5) * 0.005;
+        }
+        particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePos, 3));
+        particleGeo.setAttribute('size', new THREE.BufferAttribute(particleSizes, 1));
+
+        const particleMat = new THREE.PointsMaterial({
+            color: 0x88bbff,
+            size: 0.025,
+            transparent: true,
+            opacity: 0.35,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            sizeAttenuation: true,
+        });
+        const particles = new THREE.Points(particleGeo, particleMat);
+        scene.add(particles);
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  GROUND / ENVIRONMENT
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        const groundGeo = new THREE.PlaneGeometry(12, 12);
+        const groundMat = new THREE.MeshStandardMaterial({
+            color: 0x0a0e18,
+            roughness: 0.9,
+            metalness: 0.1,
+            transparent: true,
+            opacity: 0.4,
+        });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -1.2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const ringGeo = new THREE.RingGeometry(1.6, 2.2, 48);
+        const ringMat = new THREE.MeshBasicMaterial({
+            color: 0x224488,
+            transparent: true,
+            opacity: 0.08,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+        });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.y = -1.15;
+        scene.add(ring);
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  MOUSE / TOUCH → ICE SURFACE MAPPING
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        function getPositionOnIceSurface(nx, ny) {
+            // Map normalized screen coords to world position on z = ICE_SURFACE_Z plane
+            const vector = new THREE.Vector3(nx * 2 - 1, -(ny * 2 - 1), 0.5);
+            vector.unproject(camera);
+            const dir = vector.sub(camera.position).normalize();
+            const t = (ICE_SURFACE_Z - camera.position.z) / dir.z;
+            const x = camera.position.x + dir.x * t;
+            const y = camera.position.y + dir.y * t;
+            // Clamp to ice surface bounds
+            const half = ICE_SIZE / 2 * 0.85;
+            return {
+                x: Math.max(-half, Math.min(half, x)),
+                y: Math.max(-half, Math.min(half, y))
+            };
+        }
+
+        function updateTargetPosition(clientX, clientY) {
+            const nx = clientX / window.innerWidth;
+            const ny = clientY / window.innerHeight;
+            mouseX = nx;
+            mouseY = ny;
+            const pos = getPositionOnIceSurface(nx, ny);
+            targetHammerX = pos.x;
+            targetHammerY = pos.y;
+        }
+
+        // ── Mouse events ──
+        document.addEventListener('mousemove', (e) => {
+            if (isMobile) return;
+            updateTargetPosition(e.clientX, e.clientY);
+        });
+
+        document.addEventListener('mouseleave', () => {
+            // gently return to center
+            targetHammerX = 0;
+            targetHammerY = 0;
+        });
+
+        // ── Touch events ──
+        document.addEventListener('touchstart', (e) => {
+            isMobile = true;
+            const touch = e.changedTouches[0];
+            if (touch) {
+                touchId = touch.identifier;
+                touchActive = true;
+                updateTargetPosition(touch.clientX, touch.clientY);
+                // Trigger swing on touch start (like click)
+                triggerSwing();
+            }
+        }, { passive: true });
+
+        document.addEventListener('touchmove', (e) => {
+            isMobile = true;
+            const touch = e.changedTouches[0];
+            if (touch && touchActive) {
+                updateTargetPosition(touch.clientX, touch.clientY);
+            }
+        }, { passive: true });
+
+        document.addEventListener('touchend', (e) => {
+            const touch = e.changedTouches[0];
+            if (touch && touch.identifier === touchId) {
+                touchActive = false;
+                touchId = null;
+                // Return to center gently
+                targetHammerX = 0;
+                targetHammerY = 0;
+            }
+        }, { passive: true });
+
+        document.addEventListener('touchcancel', () => {
+            touchActive = false;
+            touchId = null;
+            targetHammerX = 0;
+            targetHammerY = 0;
+        }, { passive: true });
+
+        // ── Click / tap swing ──
+        function triggerSwing() {
+            if (isShattered || isEnding || isSwining) return;
+            isSwining = true;
+            hammerSwing = 0;
+            swingSpeed = 0.035 + Math.random() * 0.01;
+        }
+
+        document.addEventListener('click', () => {
+            if (isMobile) return;
+            triggerSwing();
+        });
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  ICE BREAKING LOGIC
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        function getCrackCountForHit(hit) {
+        const levels = [
+        1,   // Hit 1
+        3,   // Hit 2
+        6,   // Hit 3
+        10,  // Hit 4
+        16,  // Hit 5
+        24,  // Hit 6
+        36,  // Hit 7
+        50,  // Hit 8
+        68,  // Hit 9
+        90   // Hit 10 (just before shatter)
+    ];
+
+    return levels[Math.min(hit - 1, levels.length - 1)];
+}
+
+        function registerHit() {
+            if (isShattered || isEnding) return;
+            hitCount++;
+
+            if (hitCount >= CRACK_LEVELS) {
+                triggerShatter();
+                return;
+            }
+
+            const count = getCrackCountForHit(hitCount);
+            updateCracks(count);
+
+            cameraShake.intensity = 0.06 + hitCount * 0.015;
+            cameraShake.x = (Math.random() - 0.5) * 0.04;
+            cameraShake.y = (Math.random() - 0.5) * 0.04;
+            cameraShake.z = (Math.random() - 0.5) * 0.02;
+
+            iceMaterial.emissive = new THREE.Color(0x4488cc);
+            iceMaterial.emissiveIntensity = 0.08 + hitCount * 0.04;
+            setTimeout(() => {
+                iceMaterial.emissiveIntensity = 0.02;
+            }, 300);
+        }
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  SHATTER EFFECT
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        function triggerShatter() {
+            if (isShattered) return;
+            isShattered = true;
+            isShattering = true;
+            shatterClock = 0;
+            freezeFrames = 6;
+
+            if (iceMesh) {
+                iceMesh.visible = false;
+                innerIceMesh.visible = false;
+            }
+            if (crackMesh) {
+                scene.remove(crackMesh);
+                crackMesh.geometry.dispose();
+                crackMesh.material.dispose();
+                crackMesh = null;
+            }
+
+            createFragments();
+            createShatterParticles();
+
+            cameraShake.intensity = 0.35;
+            cameraShake.x = (Math.random() - 0.5) * 0.2;
+            cameraShake.y = (Math.random() - 0.5) * 0.2;
+            cameraShake.z = (Math.random() - 0.5) * 0.1;
+
+            setTimeout(() => {
+                showFinalVideo();
+            }, 790);
+        }
+
+        function createFragments() {
+            const count = 80 + Math.floor(Math.random() * 60);
+            for (let i = 0; i < count; i++) {
+                const size = 0.04 + Math.random() * 0.22;
+                const geo = new THREE.DodecahedronGeometry(size, 0);
+                const mat = new THREE.MeshPhysicalMaterial({
+                    color: new THREE.Color().setHSL(0.55 + Math.random() * 0.08, 0.3, 0.5 + Math.random() * 0.3),
+                    metalness: 0.0,
+                    roughness: 0.1 + Math.random() * 0.2,
+                    transparent: true,
+                    opacity: 0.6 + Math.random() * 0.35,
+                    ior: 1.31,
+                    envMapIntensity: 0.3,
+                });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.castShadow = true;
+
+                const face = Math.floor(Math.random() * 6);
+                const u = 0.1 + Math.random() * 0.8;
+                const v = 0.1 + Math.random() * 0.8;
+                const pos = getSurfacePoint(face, u, v, ICE_SIZE);
+                mesh.position.copy(pos);
+                mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+
+                const dir = pos.clone().normalize();
+                const speed = 1.2 + Math.random() * 2.8;
+                const spread = 0.6;
+                const vel = new THREE.Vector3(
+                    dir.x * speed + (Math.random() - 0.5) * spread,
+                    dir.y * speed + (Math.random() - 0.5) * spread + 0.5,
+                    dir.z * speed + (Math.random() - 0.5) * spread,
+                );
+                vel.y += 0.6 + Math.random() * 1.0;
+
+                const rotSpeed = new THREE.Vector3(
+                    (Math.random() - 0.5) * 12,
+                    (Math.random() - 0.5) * 12,
+                    (Math.random() - 0.5) * 12,
+                );
+
+                fragments.push({
+                    mesh,
+                    vel,
+                    rotSpeed,
+                    life: 1.0,
+                    decay: 0.992 + Math.random() * 0.006,
+                    gravity: -0.012 - Math.random() * 0.008,
+                });
+                scene.add(mesh);
+            }
+        }
+
+        function createShatterParticles() {
+            const count = 180;
+            const geo = new THREE.BufferGeometry();
+            const pos = new Float32Array(count * 3);
+            const cols = new Float32Array(count * 3);
+            const sizes = new Float32Array(count);
+            const velocities = [];
+
+            for (let i = 0; i < count; i++) {
+                const radius = ICE_SIZE * 0.5 * Math.random();
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                pos[i * 3] = Math.sin(phi) * Math.cos(theta) * radius;
+                pos[i * 3 + 1] = Math.cos(phi) * radius * 0.7;
+                pos[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * radius;
+                const c = new THREE.Color().setHSL(0.55 + Math.random() * 0.1, 0.5, 0.6 + Math.random() * 0.4);
+                cols[i * 3] = c.r;
+                cols[i * 3 + 1] = c.g;
+                cols[i * 3 + 2] = c.b;
+                sizes[i] = 0.015 + Math.random() * 0.05;
+                velocities.push({
+                    x: (Math.random() - 0.5) * 5,
+                    y: (Math.random() - 0.5) * 5 + 1.5,
+                    z: (Math.random() - 0.5) * 5,
+                });
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+            geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+            const mat = new THREE.PointsMaterial({
+                size: 0.04,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.9,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                sizeAttenuation: true,
+            });
+            const pts = new THREE.Points(geo, mat);
+            scene.add(pts);
+
+            fragmentParticles.push({
+                mesh: pts,
+                velocities,
+                life: 1.0,
+                decay: 0.985,
+                gravity: -0.015,
+            });
+        }
+
+        function updateShatter(delta) {
+            if (!isShattering) return;
+            shatterClock += delta;
+
+            let allDead = true;
+            for (const f of fragments) {
+                f.vel.y += f.gravity;
+                f.mesh.position.x += f.vel.x * delta * 1.2;
+                f.mesh.position.y += f.vel.y * delta * 1.2;
+                f.mesh.position.z += f.vel.z * delta * 1.2;
+                f.mesh.rotation.x += f.rotSpeed.x * delta;
+                f.mesh.rotation.y += f.rotSpeed.y * delta;
+                f.mesh.rotation.z += f.rotSpeed.z * delta;
+                f.vel.multiplyScalar(f.decay);
+                f.life -= delta * 0.2;
+                f.mesh.material.opacity = Math.max(0, f.life * 0.7);
+                if (f.life > 0.05) allDead = false;
+            }
+
+            for (const p of fragmentParticles) {
+                const pos = p.mesh.geometry.attributes.position;
+                const arr = pos.array;
+                for (let i = 0; i < p.velocities.length; i++) {
+                    const v = p.velocities[i];
+                    v.y += p.gravity;
+                    arr[i * 3] += v.x * delta * 0.8;
+                    arr[i * 3 + 1] += v.y * delta * 0.8;
+                    arr[i * 3 + 2] += v.z * delta * 0.8;
+                    v.x *= 0.99;
+                    v.z *= 0.99;
+                }
+                pos.needsUpdate = true;
+                p.mesh.material.opacity = Math.max(0, p.life);
+                p.life -= delta * 0.3;
+                if (p.life < 0.01) {
+                    p.mesh.visible = false;
+                }
+            }
+
+            cameraShake.intensity *= 0.96;
+            if (cameraShake.intensity < 0.001) cameraShake.intensity = 0;
+
+            if (shatterClock > 3.5) {
+                isShattering = false;
+                for (const f of fragments) {
+                    scene.remove(f.mesh);
+                    f.mesh.geometry.dispose();
+                    f.mesh.material.dispose();
+                }
+                fragments = [];
+                for (const p of fragmentParticles) {
+                    scene.remove(p.mesh);
+                    p.mesh.geometry.dispose();
+                    p.mesh.material.dispose();
+                }
+                fragmentParticles = [];
+            }
+        }
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  FINAL IMAGE
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    function showFinalVideo() {
+    if (finalImageRevealed) return;
+
+    finalImageRevealed = true;
+    isEnding = true;
+
+    finalOverlay.classList.add("visible");
+
+    finalVideo.currentTime = 0;
+    finalVideo.muted = true;
+
+    finalVideo.play().then(() => {
+
+        setTimeout(() => {
+            finalVideo.muted = false;
+        },100);
+
+    }).catch(console.error);
+}
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  HIT DETECTION
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        function checkHit() {
+            if (isShattered || isEnding) return;
+            if (!hammerHead) return;
+
+            // Get hammer head world position
+            const headWorldPos = new THREE.Vector3();
+            hammerHead.getWorldPosition(headWorldPos);
+
+            // Check if head is near the ice surface (z ≈ ICE_SURFACE_Z)
+            const distToSurface = Math.abs(headWorldPos.z - ICE_SURFACE_Z);
+            const distToCenter = Math.sqrt(
+                headWorldPos.x * headWorldPos.x +
+                headWorldPos.y * headWorldPos.y
+            );
+
+            // Hit if head is on the surface and within the ice bounds
+            if (distToSurface < 0.5 && distToCenter < ICE_SIZE / 2 * 0.9) {
+                registerHit();
+            }
+        }
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  ANIMATION LOOP
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = Math.min(clock.getDelta(), 0.05);
+            const elapsed = clock.elapsedTime;
+
+            // ── Freeze frame ──
+            if (freezeFrames > 0) {
+                freezeFrames--;
+                composer.render();
+                return;
+            }
+
+            // ── Camera breathing ──
+            const breath = Math.sin(elapsed * 0.18) * 0.06;
+            const breathZ = Math.sin(elapsed * 0.22 + 0.5) * 0.04;
+            const baseX = 0;
+            const baseY = 0.4 + Math.sin(elapsed * 0.12) * 0.04;
+            const baseZ = 5.0 + breathZ;
+
+            let shakeX = 0,
+                shakeY = 0,
+                shakeZ = 0;
+            if (cameraShake.intensity > 0.001) {
+                shakeX = (Math.random() - 0.5) * cameraShake.intensity * 0.4;
+                shakeY = (Math.random() - 0.5) * cameraShake.intensity * 0.4;
+                shakeZ = (Math.random() - 0.5) * cameraShake.intensity * 0.15;
+                cameraShake.intensity *= shakeDecay;
+            }
+
+            camera.position.x = baseX + shakeX;
+            camera.position.y = baseY + shakeY;
+            camera.position.z = baseZ + shakeZ;
+            camera.lookAt(0, 0.0, 0);
+
+            // ── Hammer follow (smooth) ──
+            const lerpSpeed = 0.10;
+            currentHammerX += (targetHammerX - currentHammerX) * lerpSpeed;
+            currentHammerY += (targetHammerY - currentHammerY) * lerpSpeed;
+
+            // Rotational lag
+            const rotLerp = 0.06;
+            currentHammerRotX += (targetHammerX * 0.12 - currentHammerRotX) * rotLerp;
+            currentHammerRotY += (targetHammerY * 0.10 - currentHammerRotY) * rotLerp;
+
+            // Position hammer on ice surface
+            const hammerPos = new THREE.Vector3(
+                currentHammerX,
+                currentHammerY,
+                ICE_SURFACE_Z
+            );
+            hammerGroup.position.lerp(hammerPos, 0.12);
+
+            // Face the ice
+            const lookTarget = new THREE.Vector3(0, 0, 0);
+            const dir = lookTarget.clone().sub(hammerGroup.position).normalize();
+            const quat = new THREE.Quaternion().setFromUnitVectors(
+                new THREE.Vector3(0, 0, 1),
+                dir
+            );
+            hammerGroup.quaternion.slerp(quat, 0.12);
+
+            // Additional mouse-driven tilt
+            hammerGroup.rotateX(currentHammerRotY * 0.4);
+            hammerGroup.rotateZ(-currentHammerRotX * 0.3);
+
+            // ── Hammer swing ──
+            if (isSwining) {
+                hammerSwing += swingSpeed;
+                if (hammerSwing >= 1) {
+                    hammerSwing = 1;
+                    isSwining = false;
+                    checkHit();
+                }
+                // Swing the head around the handle axis (local X)
+                const swingAngle = Math.sin(hammerSwing * Math.PI) * 1.2;
+                if (hammerHead) {
+                    hammerHead.rotation.x = -swingAngle * 1.6;
+                }
+            } else {
+                if (hammerHead) {
+                    hammerHead.rotation.x *= 0.92;
+                }
+            }
+
+            // ── Cracks glow ──
+            if (crackMesh && !isShattered) {
+                const pulse = 0.7 + 0.3 * Math.sin(elapsed * 1.2 + hitCount * 0.5);
+                crackMesh.material.opacity = 0.5 + 0.35 * pulse;
+            }
+
+            // ── Ice subtle animation ──
+            if (iceMesh && !isShattered) {
+                iceMesh.rotation.y = Math.sin(elapsed * 0.03) * 0.012;
+                iceMesh.rotation.x = Math.sin(elapsed * 0.025 + 0.5) * 0.008;
+                iceMaterial.emissiveIntensity = 0.02 + 0.015 * Math.sin(elapsed * 0.5);
+                if (innerIceMesh) {
+                    innerIceMesh.rotation.y = iceMesh.rotation.y;
+                    innerIceMesh.rotation.x = iceMesh.rotation.x;
+                }
+            }
+
+            // ── Snow particles ──
+            const pPos = particles.geometry.attributes.position;
+            const pArr = pPos.array;
+            for (let i = 0; i < particleCount; i++) {
+                pArr[i * 3] += particleDrifts[i * 3] + Math.sin(elapsed * particleSpeeds[i] + i) * 0.0003;
+                pArr[i * 3 + 1] += particleDrifts[i * 3 + 1] + Math.sin(elapsed * particleSpeeds[i] * 0.7 + i * 0.5) *
+                    0.0002;
+                pArr[i * 3 + 2] += particleDrifts[i * 3 + 2] + Math.cos(elapsed * particleSpeeds[i] * 0.8 + i * 0.3) *
+                    0.0003;
+                const radius = 3.5;
+                const x = pArr[i * 3],
+                    y = pArr[i * 3 + 1],
+                    z = pArr[i * 3 + 2];
+                const dist = Math.sqrt(x * x + y * y + z * z);
+                if (dist > radius) {
+                    pArr[i * 3] *= 0.99;
+                    pArr[i * 3 + 1] *= 0.99;
+                    pArr[i * 3 + 2] *= 0.99;
+                }
+            }
+            pPos.needsUpdate = true;
+
+            // ── Update shatter ──
+            if (isShattering) {
+                updateShatter(delta);
+            }
+
+            // ── Render ──
+            composer.render();
+        }
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  RESIZE
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        function onResize() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            const aspect = w / h;
+
+            // Adjust camera for mobile portrait
+            if (aspect < 0.8) {
+                // Mobile portrait: zoom out slightly to fit ice
+                camera.position.z = 5.8;
+                camera.position.y = 0.5;
+                camera.fov = 42;
+            } else if (aspect < 1.2) {
+                // Mobile landscape or small tablet
+                camera.position.z = 5.2;
+                camera.position.y = 0.4;
+                camera.fov = 38;
+            } else {
+                // Desktop
+                camera.position.z = 5.0;
+                camera.position.y = 0.4;
+                camera.fov = 38;
+            }
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(w, h);
+            composer.setSize(w, h);
+            bloomPass.resolution.set(w, h);
+        }
+
+        window.addEventListener('resize', onResize);
+        // Also handle orientation change on mobile
+        window.addEventListener('orientationchange', () => {
+            setTimeout(onResize, 300);
+        });
+
+        // Initial sizing
+        onResize();
+
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        //  START
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        animate();
+
+        // Small initial nudge
+        setTimeout(() => {
+            cameraShake.intensity = 0.02;
+            cameraShake.x = 0.005;
+            cameraShake.y = 0.005;
+        }, 300);
+
+        console.log('❄️ Break the Ice — Move mouse/finger to aim, click/tap to swing!');
+        console.log('📸 Replace FINAL_IMAGE with your own image URL.');
+    </script>
+</body>
+</html>
+
+
