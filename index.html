@@ -93,9 +93,8 @@
             }
         }
 
-        /* ── Responsive tweaks: only for small screens, remove sizing restrictions ── */
+        /* ── Responsive: ensure video fills screen on all devices ── */
         @media (max-width: 640px) {
-            /* Remove max-width/max-height so video fills screen */
             #final-video {
                 max-width: none;
                 max-height: none;
@@ -187,7 +186,7 @@
         let shatterClock = 0;
         let isShattering = false;
         let shakeDecay = 0.92;
-        let finalImageRevealed = false;
+        let finalVideoRevealed = false;
         let finalOverlay = document.getElementById('final-overlay');
         let finalVideo = document.getElementById('final-video');
         finalVideo.src = FINAL_VIDEO;
@@ -934,27 +933,29 @@
         }
 
         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        //  FINAL IMAGE
+        //  FINAL VIDEO REVEAL
         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    function showFinalVideo() {
-    if (finalImageRevealed) return;
+        function showFinalVideo() {
+            if (finalVideoRevealed) return;
+            finalVideoRevealed = true;
+            isEnding = true;
 
-    finalImageRevealed = true;
-    isEnding = true;
+            // Show overlay (starts fly‑in animation)
+            finalOverlay.classList.add("visible");
 
-    finalOverlay.classList.add("visible");
+            // Start video from beginning
+            finalVideo.currentTime = 0;
+            finalVideo.muted = true; // ensure autoplay on mobile
+            finalVideo.play().then(() => {
+                // Unmute after a moment if needed
+                setTimeout(() => {
+                    finalVideo.muted = false;
+                }, 100);
+            }).catch(console.error);
 
-    finalVideo.currentTime = 0;
-    finalVideo.muted = true;
-
-    finalVideo.play().then(() => {
-
-        setTimeout(() => {
-            finalVideo.muted = false;
-        },100);
-
-    }).catch(console.error);
-}
+            // Fade out the canvas to reveal the video behind
+            renderer.domElement.style.opacity = "0";
+        }
 
         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         //  HIT DETECTION
@@ -1149,7 +1150,6 @@
         }
 
         window.addEventListener('resize', onResize);
-        // Also handle orientation change on mobile
         window.addEventListener('orientationchange', () => {
             setTimeout(onResize, 300);
         });
@@ -1170,7 +1170,7 @@
         }, 300);
 
         console.log('❄️ Break the Ice — Move mouse/finger to aim, click/tap to swing!');
-        console.log('📸 Replace FINAL_IMAGE with your own image URL.');
+        console.log('📹 Replace FINAL_VIDEO with your own video URL.');
     </script>
 </body>
 </html>
