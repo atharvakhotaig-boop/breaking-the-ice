@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Break the Ice</title>
     <style>
         /* ── Reset & Fullscreen ── */
@@ -22,7 +22,6 @@
             background: #0a0e17;
             font-family: system-ui, -apple-system, sans-serif;
             touch-action: none;
-            /* prevent scroll/pinch on mobile */;
         }
 
         canvas {
@@ -31,9 +30,15 @@
             height: 100vh;
             cursor: none;
             touch-action: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1;
+            transition: opacity 0.2s linear;
+            opacity: 1;
         }
 
-        /* ── Final Image Overlay ── */
+        /* ── Final Video Overlay (behind canvas) ── */
         #final-overlay {
             position: fixed;
             inset: 0;
@@ -42,42 +47,59 @@
             justify-content: center;
             pointer-events: none;
             opacity: 0;
-            transition: opacity 2.2s cubic-bezier(0.23, 1, 0.32, 1);
-            z-index: 10;
+            transition: opacity 0.15s ease;
+            z-index: 0;
             background: transparent;
-            will-change: opacity;
         }
         #final-overlay.visible {
             opacity: 1;
+            pointer-events: auto;
         }
 
-        #final-video{
-        position:fixed;
-        inset:0;
-        width:100vw;
-        height:100vh;
-        object-fit:contain;
-        background:black;
+        #final-video {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: contain;
+            background: black;
+            /* Fly‑in rotating style (scale + rotate) */
+            transform: scale(0.4) rotate(-15deg);
+            opacity: 0;
+            transition: transform 1.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+                opacity 1.0s ease;
+        }
+
+        #final-overlay.visible #final-video {
+            transform: scale(1) rotate(0deg);
+            opacity: 1;
+        }
+
+        /* Subtle floating glow after settling */
+        #final-video {
+            animation: floatGlow 4.5s ease-in-out infinite 1.5s;
+            will-change: transform, filter;
         }
 
         @keyframes floatGlow {
             0%,
             100% {
-                transform: translateY(0px) scale(1);
+                transform: scale(1) rotate(0deg) translateY(0px);
                 filter: brightness(1) drop-shadow(0 0 30px rgba(120, 200, 255, 0.15));
             }
             50% {
-                transform: translateY(-12px) scale(1.01);
+                transform: scale(1.01) rotate(0.5deg) translateY(-12px);
                 filter: brightness(1.04) drop-shadow(0 0 50px rgba(120, 200, 255, 0.25));
             }
         }
 
-        /* ── Responsive tweaks ── */
+        /* ── Responsive tweaks: only for small screens, remove sizing restrictions ── */
         @media (max-width: 640px) {
+            /* Remove max-width/max-height so video fills screen */
             #final-video {
-                max-width: 88vw;
-                max-height: 60vh;
-                border-radius: 8px;
+                max-width: none;
+                max-height: none;
+                border-radius: 0;
             }
         }
         @media (prefers-reduced-motion: reduce) {
@@ -92,14 +114,14 @@
 
     <!-- Final Video Overlay (hidden until ice breaks) -->
     <div id="final-overlay">
-    <video
-    id="final-video"
-    playsinline
-    webkit-playsinline
-    preload="auto"
-    muted
-    ></video>
-</div>
+        <video
+            id="final-video"
+            playsinline
+            webkit-playsinline
+            preload="auto"
+            muted
+        ></video>
+    </div>
 
     <!-- ─── Three.js Import Map ─── -->
     <script type="importmap">
@@ -133,7 +155,7 @@
 
         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         //  STATE
-        // ━━━━━━━━━━━━━━━━━═════════════════════════════════════════════════
+        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         let hitCount = 0;
         let isShattered = false;
         let isEnding = false;
@@ -1152,5 +1174,3 @@
     </script>
 </body>
 </html>
-
-
